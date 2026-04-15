@@ -2,72 +2,117 @@ import streamlit as st
 import pandas as pd
 
 # CONFIG
-st.set_page_config(page_title="Dashboard Valorización", layout="wide")
+st.set_page_config(page_title="Dashboard Dinámico", layout="wide")
 
-st.title("📊 Dashboard de Valorización")
+st.title("📊 Dashboard Dinámico de Datos")
 
-# CARGA DE DATOS
-df = pd.read_excel("resultado.xlsx")
+# SUBIR ARCHIVO
+archivo = st.sidebar.file_uploader("Sube tu archivo Excel", type=["xlsx"])
 
-# LIMPIEZA
-df["Fecha emisión"] = pd.to_datetime(df["Fecha emisión"], errors="coerce")
+if not archivo:
+    st.warning("Sube un archivo para comenzar")
+    st.stop()
 
-# FILTROS
-col1, col2, col3 = st.columns(3)
+df = pd.read_excel(archivo)
 
-with col1:
-    comuna = st.selectbox("Comuna", ["Todas"] + list(df["Sucursal"].dropna().unique()))
+st.sidebar.markdown("### 🧩 Configuración de columnas")
 
-with col2:
-    valorizador = st.selectbox("Valorizador", ["Todos"] + list(df["Valorizador"].dropna().unique()))
+columnas = df.columns.tolist()
 
-with col3:
-    patente = st.selectbox("Patente", ["Todas"] + list(df["Patente"].dropna().unique()))
+# MAPEO DINÁMICO
+fecha_col = st.sidebar.selectbox("Columna de Fecha", columnas)
+categoria_col = st.sidebar.selectbox("Categoría (ej: comuna)", columnas)
+segmento_col = st.sidebar.selectbox("Segmento (ej: valorizador)", columnas)
 
-# FILTRADO
+# LIMPIEZA DE FECHA
+df[fecha_col] = pd.to_datetime(df[fecha_col], dayfirst=True, errors="coerce")
+df = df.dropna(subset=[fecha_col])
+
+# FILTRO FECHA
+st.sidebar.markdown("### 📅 Filtro de fecha")
+
+fecha_min = df[fecha_col].min()
+fecha_max = df[fecha_col].max()
+
+rango = st.sidebar.date_input("Rango", [fecha_min, fecha_max])
+
 filtered = df.copy()
 
-if comuna != "Todas":
-    filtered = filtered[filtered["Sucursal"] == comuna]
+if len(rango) == 2:
+    inicio = pd.to_datetime(rango[0])
+    fin = pd.to_datetime(rango[1]) + pd.Timedelta(days=1)
 
-if valorizador != "Todos":
-    filtered = filtered[filtered["Valorizador"] == valorizador]
-
-if patente != "Todas":
-    filtered = filtered[filtered["Patente"] == patente]
+    filtered = filtered[
+        (filtered[fecha_col] >= inicio) &
+        (filtered[fecha_col] < fin)
+    ]
 
 # KPIs
-st.subheader("📌 Indicadores clave")
+st.markdown("### 📌 Indicadores")
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total registros", len(filtered))
-col2.metric("Valorizadores únicos", filtered["Valorizador"].nunique())
-col3.metric("Comunas activas", filtered["Sucursal"].nunique())
+total = len(filtered)
+categorias = filtered[categoria_col].nunique()
+segmentos = filtered[segmento_col].nunique()
+
+col1.metric("Total registros", total)
+col2.metric("Categorías", categorias)
+col3.metric("Segmentos", segmentos)
+
+# EVOLUCIÓN
+st.markdown("### ⏳ Evolución")
+
+tipo = st.radio("Vista", ["Diaria", "Mensual"], horizontal=True)
+
+df_time = filtered.copy().set_index(fecha_col)
+
+if tipo == "Diaria":
+    evolucion = df_time.resample("D").size().reset_index()
+    evolucion["Fecha"] = evolucion[fecha_col].dt.strftime("%d-%m-%Y")
+else:
+    evolucion = df_time.resample("MS").size().reset_index()
+    evolucion["Fecha"] = evolucion[fecha_col].dt.strftime("%m-%Y")
+
+evolucion.columns = ["Fecha original", "Cantidad", "Fecha"]
+
+st.line_chart(evolucion.set_index("Fecha")["Cantidad"])
 
 # GRÁFICOS
-st.subheader("📊 Análisis")
+st.markdown("### 📈 Distribución")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.write("Distribución por comuna")
-    st.bar_chart(filtered["Sucursal"].value_counts())
+    st.write("Por categoría")
+    st.bar_chart(filtered[categoria_col].value_counts())
 
 with col2:
-    st.write("Top valorizadores")
-    st.bar_chart(filtered["Valorizador"].value_counts())
+    st.write("Por segmento")
+    st.bar_chart(filtered[segmento_col].value_counts())
 
-# EVOLUCIÓN EN EL TIEMPO 🔥
-st.subheader("⏳ Evolución en el tiempo")
+# CRUCE (MUY PRO 🔥)
+st.markdown("### 🔄 Cruce de variables")
 
-time_data = filtered.copy()
-time_data["Mes"] = time_data["Fecha emisión"].dt.to_period("M").astype(str)
+cruce = pd.crosstab(filtered[categoria_col], filtered[segmento_col])
+st.dataframe(cruce)
 
-evolucion = time_data.groupby("Mes").size()
+# EXPORTAR
+st.markdown("### 📤 Exportar")
 
-st.line_chart(evolucion)
+csv = filtered.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    "Descargar datos filtrados",
+    csv,
+    "datos_filtrados.csv",
+    "text/csv"
+)
 
 # TABLA FINAL
-st.subheader("📄 Datos detallados")
-st.dataframe(filtered, use_container_width=True)
+st.markdown("### 📄 Datos")
+
+tabla = filtered.copy()
+tabla[fecha_col] = tabla[fecha_col].dt.strftime("%d-%m-%Y")
+
+st.dataframe(tabla, use_container_width=True)
